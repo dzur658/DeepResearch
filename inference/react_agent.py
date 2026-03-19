@@ -1,11 +1,12 @@
 import json
 import json5
 import os
+import re
 from typing import Dict, Iterator, List, Literal, Optional, Tuple, Union
 from qwen_agent.llm.schema import Message
 from qwen_agent.utils.utils import build_text_completion_prompt
 from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
-from transformers import AutoTokenizer 
+import tiktoken
 from datetime import datetime
 from qwen_agent.agents.fncall_agent import FnCallAgent
 from qwen_agent.llm import BaseChatModel
@@ -22,6 +23,8 @@ from tool_scholar import *
 from tool_python import *
 from tool_search import *
 from tool_visit import *
+from tool_browse import *
+from tool_xtrending import *
 
 OBS_START = '<tool_response>'
 OBS_END = '\n</tool_response>'
@@ -32,8 +35,10 @@ TOOL_CLASS = [
     FileParser(),
     Scholar(),
     Visit(),
+    Browse(),
     Search(),
     PythonInterpreter(),
+    XTrending(),
 ]
 TOOL_MAP = {tool.name: tool for tool in TOOL_CLASS}
 
@@ -49,43 +54,45 @@ class MultiTurnReactAgent(FnCallAgent):
                  function_list: Optional[List[Union[str, Dict, BaseTool]]] = None,
                  llm: Optional[Union[Dict, BaseChatModel]] = None,
                  **kwargs):
+        super().__init__(function_list=function_list, llm=llm, **kwargs)
 
         self.llm_generate_cfg = llm["generate_cfg"]
-        self.llm_local_path = llm["model"]
-
-    def sanity_check_output(self, content):
-        return "<think>" in content and "</think>" in content
-    
-    def call_server(self, msgs, planning_port, max_tries=10):
-        
-        openai_api_key = "EMPTY"
-        openai_api_base = f"http://127.0.0.1:{planning_port}/v1"
-
-        client = OpenAI(
-            api_key=openai_api_key,
-            base_url=openai_api_base,
+        self.model = llm["model"]
+        brev_api_key = os.getenv("BREV_API_KEY")
+        brev_base_url = os.getenv("BREV_MAIN_BASE_URL")
+        if not brev_api_key:
+            raise ValueError("BREV_API_KEY environment variable is not set.")
+        if not brev_base_url:
+            raise ValueError("BREV_MAIN_BASE_URL environment variable is not set.")
+        self._brev_client = OpenAI(
+            api_key=brev_api_key,
+            base_url=brev_base_url,
             timeout=600.0,
         )
+        self._tokenizer = tiktoken.get_encoding("cl100k_base")
 
+    def _strip_thinking(self, content):
+        """Strip thinking traces that may leak into message.content from NIM reasoning parser."""
+        return re.sub(r'<think>.*?</think>\s*', '', content, flags=re.DOTALL)
+
+    def call_server(self, msgs, max_tries=10):
         base_sleep_time = 1 
         for attempt in range(max_tries):
             try:
                 print(f"--- Attempting to call the service, try {attempt + 1}/{max_tries} ---")
-                chat_response = client.chat.completions.create(
+                chat_response = self._brev_client.chat.completions.create(
                     model=self.model,
                     messages=msgs,
                     stop=["\n<tool_response>", "<tool_response>"],
-                    temperature=self.llm_generate_cfg.get('temperature', 0.6),
+                    temperature=self.llm_generate_cfg.get('temperature', 1.0),
                     top_p=self.llm_generate_cfg.get('top_p', 0.95),
-                    logprobs=True,
-                    max_tokens=10000,
-                    presence_penalty=self.llm_generate_cfg.get('presence_penalty', 1.1)
+                    max_tokens=16384,
+                    presence_penalty=self.llm_generate_cfg.get('presence_penalty', 1.1),
+                    extra_body={"chat_template_kwargs": {"enable_thinking": True}}
                 )
                 content = chat_response.choices[0].message.content
-
-                # OpenRouter provides API calling. If you want to use OpenRouter, you need to uncomment line 89 - 90.
-                # reasoning_content = "<think>\n" + chat_response.choices[0].message.reasoning.strip() + "\n</think>"
-                # content = reasoning_content + content                
+                if content:
+                    content = self._strip_thinking(content)
                 
                 if content and content.strip():
                     print("--- Service call successful, received a valid response ---")
@@ -107,15 +114,11 @@ class MultiTurnReactAgent(FnCallAgent):
             else:
                 print("Error: All retry attempts have been exhausted. The call has failed.")
         
-        return f"vllm server error!!!"
+        return "Brev API server error!"
 
     def count_tokens(self, messages):
-        tokenizer = AutoTokenizer.from_pretrained(self.llm_local_path) 
-        full_prompt = tokenizer.apply_chat_template(messages, tokenize=False)
-        tokens = tokenizer(full_prompt, return_tensors="pt")
-        token_count = len(tokens["input_ids"][0])
-        
-        return token_count
+        text = "".join(m.get("content", "") for m in messages)
+        return len(self._tokenizer.encode(text))
 
     def _run(self, data: str, model: str, **kwargs) -> List[List[Message]]:
         self.model=model
@@ -126,7 +129,6 @@ class MultiTurnReactAgent(FnCallAgent):
             question = raw_msg.split("User:")[1].strip() if "User:" in raw_msg else raw_msg 
 
         start_time = time.time()
-        planning_port = data['planning_port']
         answer = data['item']['answer']
         self.user_prompt = question
         system_prompt = SYSTEM_PROMPT
@@ -150,7 +152,7 @@ class MultiTurnReactAgent(FnCallAgent):
                 return result
             round += 1
             num_llm_calls_available -= 1
-            content = self.call_server(messages, planning_port)
+            content = self.call_server(messages)
             print(f'Round {round}: {content}')
             if '<tool_response>' in content:
                 pos = content.find('<tool_response>')
@@ -191,7 +193,7 @@ class MultiTurnReactAgent(FnCallAgent):
                 print(f"Token quantity exceeds the limit: {token_count} > {max_tokens}")
                 
                 messages[-1]['content'] = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
-                content = self.call_server(messages, planning_port)
+                content = self.call_server(messages)
                 messages.append({"role": "assistant", "content": content.strip()})
                 if '<answer>' in content and '</answer>' in content:
                     prediction = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]

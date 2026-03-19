@@ -2,7 +2,6 @@ from pydantic import BaseModel
 from openai import OpenAI
 import concurrent.futures
 from typing import Literal
-import litellm 
 import os 
 import argparse
 import json
@@ -17,10 +16,8 @@ import time
 import threading
 thread_local = threading.local()
 
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY","")
-os.environ['OPENAI_API_BASE'] = os.getenv("OPENAI_API_BASE","") 
-API_KEY= os.getenv("API_KEY","")
-BASE_URL=os.getenv("BASE_URL","")
+API_KEY = os.getenv("BREV_API_KEY", "")
+BASE_URL = os.getenv("BREV_EVAL_BASE_URL", "")
 
 def get_client():
     if not hasattr(thread_local, 'client'):
@@ -81,49 +78,60 @@ def call_llm_judge(item):
     response = item["prediction"].strip()
     prompt = judge_prompt.format(question=question, correct_answer=correct_answer, response=response)
     
+    client = get_client()
     for attempt in range(100):
         try: 
-            if judge_model == "openai/qwen2.5-72b-instruct":
-                response = litellm.completion(
-                    model=judge_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    num_retries=5
+            if dataset in ["xbench-deepsearch"]:
+                structured_suffix = (
+                    '\n\nRespond ONLY with a JSON object with these exact keys: '
+                    '"最终答案" (string), "解释" (string), "结论" ("正确" or "错误").'
                 )
-                judgement = response.choices[0].message["content"]
-            elif judge_model == "google/gemini-2.0-flash-001":
-                client = get_client()
-                response_obj = client.beta.chat.completions.parse(
+                response_obj = client.chat.completions.create(
                     model=judge_model,
-                    max_completion_tokens=8192, 
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format=extracted_answer_format_for_xbench,
+                    max_tokens=8192,
+                    messages=[{"role": "user", "content": prompt + structured_suffix}],
+                    temperature=0.0,
                     timeout=100.0
-                ) 
-                raw_judge = json.loads(response_obj.choices[0].message.content)
+                )
+                raw = response_obj.choices[0].message.content.strip()
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1].strip()
+                    if raw.startswith("json"):
+                        raw = raw[4:].strip()
+                raw_judge = json.loads(raw)
                 judgement = "Correct" if raw_judge["结论"].lower() == "正确" else ""
 
             elif 'browsecomp' in dataset:
-                os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY","")
-                response = litellm.completion(
-                    model=judge_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    num_retries=5,
-                    response_format=extracted_answer_format_for_confidence
+                structured_suffix = (
+                    '\n\nRespond ONLY with a JSON object with these exact keys: '
+                    '"extracted_final_answer" (string), "reasoning" (string), '
+                    '"correct" ("yes" or "no"), "confidence" (integer 0-100), '
+                    '"strict" (true).'
                 )
-                
-                raw_content = response.choices[0].message["content"]
-                raw_judge = json.loads(raw_content)
+                response_obj = client.chat.completions.create(
+                    model=judge_model,
+                    max_tokens=8192,
+                    messages=[{"role": "user", "content": prompt + structured_suffix}],
+                    temperature=0.0,
+                    timeout=100.0
+                )
+                raw = response_obj.choices[0].message.content.strip()
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1].strip()
+                    if raw.startswith("json"):
+                        raw = raw[4:].strip()
+                raw_judge = json.loads(raw)
                 judgement = "Correct" if raw_judge["correct"].lower() == "yes" else ""
-                
+
             else:
-                response = litellm.completion(
+                response_obj = client.chat.completions.create(
                     model=judge_model,
+                    max_tokens=8192,
                     messages=[{"role": "user", "content": prompt}],
-                    num_retries=5
+                    temperature=0.0,
+                    timeout=100.0
                 )
-                judgement = response.choices[0].message["content"]
+                judgement = response_obj.choices[0].message.content
 
             return {
                 "question": question, 
@@ -458,21 +466,27 @@ def main():
                                                                         ])
     args = parser.parse_args()
     
-    dataset = args.dataset  
+    dataset = args.dataset
+    brev_eval_model = os.getenv("BREV_EVAL_MODEL_NAME", "")
+    if not brev_eval_model:
+        raise ValueError(
+            "BREV_EVAL_MODEL_NAME environment variable is not set. "
+            "Please set it to the model name for evaluation."
+        )
     if dataset in ["gaia", "webwalker"]: 
-        judge_model = "openai/qwen2.5-72b-instruct"
+        judge_model = brev_eval_model
         judge_prompt = JUDGE_PROMPT_GAIA 
     elif dataset in ["xbench-deepsearch"]: 
         judge_prompt = JUDGE_PROMPT_XBENCH
-        judge_model = "google/gemini-2.0-flash-001"
+        judge_model = brev_eval_model
     elif dataset.startswith("browsecomp_zh"):
-        judge_model = "gpt-4o-2024-08-06"
+        judge_model = brev_eval_model
         judge_prompt = JUDGE_PROMPT_BROWSECOMP_OFFICIAL 
     elif dataset.startswith("browsecomp_en"):
-        judge_model = "gpt-4o-2024-08-06"
+        judge_model = brev_eval_model
         judge_prompt = JUDGE_PROMPT_BROWSECOMP_OFFICIAL
     else:
-        judge_model = "openai/qwen2.5-72b-instruct"
+        judge_model = brev_eval_model
         judge_prompt = JUDGE_PROMPT_GAIA 
     print(f"Using {dataset} judge prompt ...")
     print(f"Judge prompt:\n {judge_prompt}")

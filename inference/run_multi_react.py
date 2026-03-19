@@ -35,9 +35,9 @@ if __name__ == "__main__":
         print(f"Error: worker_split ({worker_split}) must be between 1 and total_splits ({total_splits})")
         exit(1)
 
-    model_name = os.path.basename(model.rstrip('/'))
+    model_name = model.replace("/", "_")
 
-    model_dir = os.path.join(output_base, f"{model_name}_sglang")
+    model_dir = os.path.join(output_base, f"{model_name}_brev")
     dataset_dir = os.path.join(model_dir, args.dataset)
 
     os.makedirs(dataset_dir, exist_ok=True)
@@ -109,13 +109,6 @@ if __name__ == "__main__":
 
     tasks_to_run_all = []
     per_rollout_task_counts = {i: 0 for i in range(1, roll_out_count + 1)}
-    # Define ports
-    planning_ports = [6001, 6002, 6003, 6004, 6005, 6006, 6007, 6008]
-    # Round-robin state
-    planning_rr_idx = 0
-    summary_rr_idx = 0
-    # Sticky assignment per question
-    question_to_ports = {}
     for rollout_idx in range(1, roll_out_count + 1):
         processed_queries = processed_queries_per_rollout[rollout_idx]
         for item in items:
@@ -132,16 +125,9 @@ if __name__ == "__main__":
                 continue
 
             if question not in processed_queries:
-                # Ensure sticky and balanced port assignment per unique question
-                if question not in question_to_ports:
-                    planning_port = planning_ports[planning_rr_idx % len(planning_ports)]
-                    question_to_ports[question] = planning_port
-                    planning_rr_idx += 1
-                planning_port = question_to_ports[question]
                 tasks_to_run_all.append({
                     "item": item.copy(),
                     "rollout_idx": rollout_idx,
-                    "planning_port": planning_port,
                 })
                 per_rollout_task_counts[rollout_idx] += 1
 
@@ -161,12 +147,11 @@ if __name__ == "__main__":
                 'top_p': args.top_p,
                 'presence_penalty': args.presence_penalty
             },
-            'model_type': 'qwen_dashscope'
         }
 
         test_agent = MultiTurnReactAgent(
             llm=llm_cfg,
-            function_list=["search", "visit", "google_scholar", "PythonInterpreter"]
+            function_list=["search", "visit", "browse", "google_scholar", "PythonInterpreter", "x_trending"]
         )
 
         write_locks = {i: threading.Lock() for i in range(1, roll_out_count + 1)}

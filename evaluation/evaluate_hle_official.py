@@ -12,11 +12,11 @@ from collections import Counter, defaultdict
 from transformers import AutoTokenizer
 import argparse
 
-JUDGE_MODEL="openai/o3-mini"
+JUDGE_MODEL = os.getenv("BREV_EVAL_MODEL_NAME", "")
 MAX_WORKERS = 20
 
-API_KEY= os.getenv("API_KEY","")
-BASE_URL=os.getenv("BASE_URL","")
+API_KEY = os.getenv("BREV_API_KEY", "")
+BASE_URL = os.getenv("BREV_EVAL_BASE_URL", "")
 
 def load_jsonl(fp):
     with open(fp, encoding='utf-8') as f:
@@ -63,27 +63,38 @@ class ExtractedAnswer(BaseModel):
 
 def extract_answer(question, correct_answer, response):
     client = get_client()
+    structured_instruction = (
+        "\n\nRespond ONLY with a JSON object with these exact keys: "
+        '"extracted_final_answer" (string), "reasoning" (string), '
+        '"correct" ("yes" or "no"), "confidence" (integer 0-100), "strict" (true).'
+    )
     prompt = JUDGE_PROMPT.format(question=question, correct_answer=correct_answer, response=response)
+    prompt += structured_instruction
     for i in range(6):
         try:
-            response_obj = client.beta.chat.completions.parse(
+            response_obj = client.chat.completions.create(
                 model=JUDGE_MODEL,
-                max_completion_tokens=8192, 
+                max_tokens=8192,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                response_format=ExtractedAnswer, 
+                temperature=0.0,
                 timeout=60.0
-            ) 
-            content = response_obj.choices[0].message.parsed
-            return { 
+            )
+            raw = response_obj.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1].strip()
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
+            content = json.loads(raw)
+            return {
                 "correct_answer": correct_answer,
-                "model_answer": content.extracted_final_answer,
-                "reasoning": content.reasoning,
-                "correct": content.correct,
-                "confidence": content.confidence
+                "model_answer": content["extracted_final_answer"],
+                "reasoning": content["reasoning"],
+                "correct": content["correct"],
+                "confidence": content.get("confidence", 50)
             }
-        except Exception as e: # very, very rare
+        except Exception as e:
             print("Error:", e)
             if 'length limit' in str(e):
                 return None
@@ -132,6 +143,11 @@ def process_item(item, tokenizer):
 
 
 if __name__ == "__main__":
+    if not JUDGE_MODEL:
+        raise ValueError(
+            "BREV_EVAL_MODEL_NAME environment variable is not set. "
+            "Please set it to the model name for evaluation."
+        )
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_fp', 
                        type=str, 

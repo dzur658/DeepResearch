@@ -80,17 +80,17 @@ class VideoAnalysis(BaseTool):
         )
         self.http_session = self._init_http_client()
         self._check_dependencies()
+        self._whisper_model = None
         logger.info("Video analysis tool initialized")
 
     def _init_config(self, cfg: Dict) -> Dict:
         """Initialize configuration with sensible defaults"""
         return {
-            'api_key': os.getenv('DASHSCOPE_API_KEY', ''),
-            'api_base': cfg.get('api_base') or os.getenv('DASHSCOPE_API_BASE', ''),
-            'video_model': cfg.get('video_model') or os.getenv('VIDEO_MODEL_NAME', 'qwen-omni-turbo'),
-            'analysis_model': cfg.get('analysis_model') or os.getenv('VIDEO_ANALYSIS_MODEL_NAME', 'qwen-plus-latest'),
-            'timeout': min(cfg.get('timeout', 30), 300),  # Cap at 300 seconds
-            'max_frames': min(cfg.get('max_frames', 20), 50),  # Cap at 50 frames
+            'api_key': os.getenv('BREV_API_KEY', ''),
+            'api_base': cfg.get('api_base') or os.getenv('BREV_SUMMARY_BASE_URL', ''),
+            'analysis_model': cfg.get('analysis_model') or os.getenv('BREV_SUMMARY_MODEL_NAME', ''),
+            'timeout': min(cfg.get('timeout', 30), 300),
+            'max_frames': min(cfg.get('max_frames', 20), 50),
             'max_file_size': MAX_FILE_SIZE
         }
 
@@ -416,43 +416,32 @@ class VideoAnalysis(BaseTool):
         except Exception as e:
             raise RuntimeError(f"Audio extraction failed: {str(e)}") from e
 
+    def _load_whisper(self):
+        """Lazy-load the whisper model on first use"""
+        if self._whisper_model is None:
+            try:
+                import whisper
+                self._whisper_model = whisper.load_model("base")
+                logger.info("Loaded local whisper model for audio transcription")
+            except ImportError:
+                logger.error(
+                    "openai-whisper not installed. "
+                    "Install with: pip install openai-whisper"
+                )
+                raise
+        return self._whisper_model
+
     def _transcribe_audio(self, audio_path: Path) -> str:
-        """Transcribe audio to text"""
+        """Transcribe audio to text using local whisper model"""
         logger.info(f"Starting transcription: {audio_path}")
         start_time = time.time()
 
         try:
-            with open(audio_path, 'rb') as f:
-                base64_audio = base64.b64encode(f.read()).decode()
-
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Completely transcribe this audio content with all details"},
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": f"data:audio/mp3;base64,{base64_audio}",
-                            "format": "mp3"
-                        }
-                    }
-                ]
-            }]
-            response = self.client.chat.completions.create(
-                model=self.config['video_model'],
-                messages=messages,
-                stream=True
-            )
-
-            transcript = []
-            for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    transcript.append(chunk.choices[0].delta.content)
-
-            final_text = ''.join(transcript).strip()
+            model = self._load_whisper()
+            result = model.transcribe(str(audio_path))
+            final_text = result.get("text", "").strip()
             logger.info(f"Transcription completed (time: {time.time() - start_time:.1f}s, chars: {len(final_text)})")
             return final_text
-
         except Exception as e:
             logger.error(f"Transcription failed: {str(e)}")
             return ""
@@ -594,26 +583,25 @@ class VideoAnalysis(BaseTool):
             return "Analysis generation failed"
 
     def _build_analysis_messages(self, prompt: str, transcript: str, frames: List[str], is_audio: bool) -> List[Dict]:
-        """Build prompt messages for analysis"""
+        """Build text-only prompt messages for analysis via Brev NIM.
+
+        Brev NIM deployments are text-only LLMs, so frames are reported by count
+        rather than sent as images. The transcript carries the primary signal.
+        """
+        media_type = "audio" if is_audio else "video"
         system_prompt = (
-            f"You are a professional {'audio' if is_audio else 'video'} analysis expert. "
+            f"You are a professional {media_type} analysis expert. "
             "Your task is to analyze the provided content by:\n"
             "1. Identifying key information and contextual relationships\n"
             "2. Noting time-sequence information\n"
             "3. Providing expert answers to the user's question"
         )
 
-        content = [
-            {"type": "text", "text": f"User question: {prompt}\n\nAudio transcription:\n{transcript}"}
-        ]
-
-        if not is_audio:
-            content.extend([
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}}
-                for img in frames
-            ])
+        user_text = f"User question: {prompt}\n\nAudio transcription:\n{transcript}"
+        if not is_audio and frames:
+            user_text += f"\n\n[{len(frames)} key frames were extracted from the video but cannot be displayed in text mode.]"
 
         return [
-            {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-            {"role": "user", "content": content}
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text}
         ]

@@ -97,19 +97,20 @@ class Visit(BaseTool):
         return response.strip()
         
     def call_server(self, msgs, max_retries=2):
-        api_key = os.environ.get("API_KEY")
-        url_llm = os.environ.get("API_BASE")
-        model_name = os.environ.get("SUMMARY_MODEL_NAME", "")
+        api_key = os.environ.get("BREV_API_KEY")
+        base_url = os.environ.get("BREV_SUMMARY_BASE_URL")
+        model_name = os.environ.get("BREV_SUMMARY_MODEL_NAME", "")
         client = OpenAI(
             api_key=api_key,
-            base_url=url_llm,
+            base_url=base_url,
         )
         for attempt in range(max_retries):
             try:
                 chat_response = client.chat.completions.create(
                     model=model_name,
                     messages=msgs,
-                    temperature=0.7
+                    temperature=0.7,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}}
                 )
                 content = chat_response.choices[0].message.content
                 if content:
