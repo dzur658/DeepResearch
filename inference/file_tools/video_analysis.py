@@ -86,9 +86,9 @@ class VideoAnalysis(BaseTool):
     def _init_config(self, cfg: Dict) -> Dict:
         """Initialize configuration with sensible defaults"""
         return {
-            'api_key': os.getenv('BREV_API_KEY', ''),
-            'api_base': cfg.get('api_base') or os.getenv('BREV_SUMMARY_BASE_URL', ''),
-            'analysis_model': cfg.get('analysis_model') or os.getenv('BREV_SUMMARY_MODEL_NAME', ''),
+            'api_key': os.getenv('NVIDIA_API_KEY', ''),
+            'api_base': cfg.get('api_base') or os.getenv('NVIDIA_BASE_URL', ''),
+            'analysis_model': cfg.get('analysis_model') or os.getenv('NVIDIA_SUMMARY_MODEL', ''),
             'timeout': min(cfg.get('timeout', 30), 300),
             'max_frames': min(cfg.get('max_frames', 20), 50),
             'max_file_size': MAX_FILE_SIZE
@@ -583,9 +583,9 @@ class VideoAnalysis(BaseTool):
             return "Analysis generation failed"
 
     def _build_analysis_messages(self, prompt: str, transcript: str, frames: List[str], is_audio: bool) -> List[Dict]:
-        """Build text-only prompt messages for analysis via Brev NIM.
+        """Build text-only prompt messages for analysis via NVIDIA NIM.
 
-        Brev NIM deployments are text-only LLMs, so frames are reported by count
+        NVIDIA NIM deployments are text-only LLMs, so frames are reported by count
         rather than sent as images. The transcript carries the primary signal.
         """
         media_type = "audio" if is_audio else "video"

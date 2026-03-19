@@ -16,8 +16,8 @@ import time
 import threading
 thread_local = threading.local()
 
-API_KEY = os.getenv("BREV_API_KEY", "")
-BASE_URL = os.getenv("BREV_EVAL_BASE_URL", "")
+API_KEY = os.getenv("NVIDIA_API_KEY", "")
+BASE_URL = os.getenv("NVIDIA_BASE_URL", "")
 
 def get_client():
     if not hasattr(thread_local, 'client'):
@@ -467,26 +467,26 @@ def main():
     args = parser.parse_args()
     
     dataset = args.dataset
-    brev_eval_model = os.getenv("BREV_EVAL_MODEL_NAME", "")
-    if not brev_eval_model:
+    nvidia_eval_model = os.getenv("NVIDIA_EVAL_MODEL", "")
+    if not nvidia_eval_model:
         raise ValueError(
-            "BREV_EVAL_MODEL_NAME environment variable is not set. "
+            "NVIDIA_EVAL_MODEL environment variable is not set. "
             "Please set it to the model name for evaluation."
         )
     if dataset in ["gaia", "webwalker"]: 
-        judge_model = brev_eval_model
+        judge_model = nvidia_eval_model
         judge_prompt = JUDGE_PROMPT_GAIA 
     elif dataset in ["xbench-deepsearch"]: 
         judge_prompt = JUDGE_PROMPT_XBENCH
-        judge_model = brev_eval_model
+        judge_model = nvidia_eval_model
     elif dataset.startswith("browsecomp_zh"):
-        judge_model = brev_eval_model
+        judge_model = nvidia_eval_model
         judge_prompt = JUDGE_PROMPT_BROWSECOMP_OFFICIAL 
     elif dataset.startswith("browsecomp_en"):
-        judge_model = brev_eval_model
+        judge_model = nvidia_eval_model
         judge_prompt = JUDGE_PROMPT_BROWSECOMP_OFFICIAL
     else:
-        judge_model = brev_eval_model
+        judge_model = nvidia_eval_model
         judge_prompt = JUDGE_PROMPT_GAIA 
     print(f"Using {dataset} judge prompt ...")
     print(f"Judge prompt:\n {judge_prompt}")

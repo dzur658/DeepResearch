@@ -97,9 +97,9 @@ class Visit(BaseTool):
         return response.strip()
         
     def call_server(self, msgs, max_retries=2):
-        api_key = os.environ.get("BREV_API_KEY")
-        base_url = os.environ.get("BREV_SUMMARY_BASE_URL")
-        model_name = os.environ.get("BREV_SUMMARY_MODEL_NAME", "")
+        api_key = os.environ.get("NVIDIA_API_KEY")
+        base_url = os.environ.get("NVIDIA_BASE_URL")
+        model_name = os.environ.get("NVIDIA_SUMMARY_MODEL", "")
         client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -110,7 +110,6 @@ class Visit(BaseTool):
                     model=model_name,
                     messages=msgs,
                     temperature=0.7,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}}
                 )
                 content = chat_response.choices[0].message.content
                 if content:

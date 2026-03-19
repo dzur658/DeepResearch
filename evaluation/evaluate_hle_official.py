@@ -12,11 +12,11 @@ from collections import Counter, defaultdict
 from transformers import AutoTokenizer
 import argparse
 
-JUDGE_MODEL = os.getenv("BREV_EVAL_MODEL_NAME", "")
+JUDGE_MODEL = os.getenv("NVIDIA_EVAL_MODEL", "")
 MAX_WORKERS = 20
 
-API_KEY = os.getenv("BREV_API_KEY", "")
-BASE_URL = os.getenv("BREV_EVAL_BASE_URL", "")
+API_KEY = os.getenv("NVIDIA_API_KEY", "")
+BASE_URL = os.getenv("NVIDIA_BASE_URL", "")
 
 def load_jsonl(fp):
     with open(fp, encoding='utf-8') as f:
@@ -145,7 +145,7 @@ def process_item(item, tokenizer):
 if __name__ == "__main__":
     if not JUDGE_MODEL:
         raise ValueError(
-            "BREV_EVAL_MODEL_NAME environment variable is not set. "
+            "NVIDIA_EVAL_MODEL environment variable is not set. "
             "Please set it to the model name for evaluation."
         )
     parser = argparse.ArgumentParser()

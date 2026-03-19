@@ -58,15 +58,15 @@ class MultiTurnReactAgent(FnCallAgent):
 
         self.llm_generate_cfg = llm["generate_cfg"]
         self.model = llm["model"]
-        brev_api_key = os.getenv("BREV_API_KEY")
-        brev_base_url = os.getenv("BREV_MAIN_BASE_URL")
-        if not brev_api_key:
-            raise ValueError("BREV_API_KEY environment variable is not set.")
-        if not brev_base_url:
-            raise ValueError("BREV_MAIN_BASE_URL environment variable is not set.")
-        self._brev_client = OpenAI(
-            api_key=brev_api_key,
-            base_url=brev_base_url,
+        nvidia_api_key = os.getenv("NVIDIA_API_KEY")
+        nvidia_base_url = os.getenv("NVIDIA_BASE_URL")
+        if not nvidia_api_key:
+            raise ValueError("NVIDIA_API_KEY environment variable is not set.")
+        if not nvidia_base_url:
+            raise ValueError("NVIDIA_BASE_URL environment variable is not set.")
+        self._nvidia_client = OpenAI(
+            api_key=nvidia_api_key,
+            base_url=nvidia_base_url,
             timeout=600.0,
         )
         self._tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -80,7 +80,7 @@ class MultiTurnReactAgent(FnCallAgent):
         for attempt in range(max_tries):
             try:
                 print(f"--- Attempting to call the service, try {attempt + 1}/{max_tries} ---")
-                chat_response = self._brev_client.chat.completions.create(
+                chat_response = self._nvidia_client.chat.completions.create(
                     model=self.model,
                     messages=msgs,
                     stop=["\n<tool_response>", "<tool_response>"],
@@ -88,7 +88,6 @@ class MultiTurnReactAgent(FnCallAgent):
                     top_p=self.llm_generate_cfg.get('top_p', 0.95),
                     max_tokens=16384,
                     presence_penalty=self.llm_generate_cfg.get('presence_penalty', 1.1),
-                    extra_body={"chat_template_kwargs": {"enable_thinking": True}}
                 )
                 content = chat_response.choices[0].message.content
                 if content:
@@ -114,7 +113,7 @@ class MultiTurnReactAgent(FnCallAgent):
             else:
                 print("Error: All retry attempts have been exhausted. The call has failed.")
         
-        return "Brev API server error!"
+        return "NVIDIA API server error!"
 
     def count_tokens(self, messages):
         text = "".join(m.get("content", "") for m in messages)

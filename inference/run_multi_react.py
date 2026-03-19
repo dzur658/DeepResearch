@@ -37,7 +37,7 @@ if __name__ == "__main__":
 
     model_name = model.replace("/", "_")
 
-    model_dir = os.path.join(output_base, f"{model_name}_brev")
+    model_dir = os.path.join(output_base, f"{model_name}_nim")
     dataset_dir = os.path.join(model_dir, args.dataset)
 
     os.makedirs(dataset_dir, exist_ok=True)
